@@ -9,6 +9,7 @@ base_url = 'https://api.binance.com'
 
 statistics_list = []
 
+
 def get_buy_watermark(symbol, buy_price, timestamp):
     history_high = 0
     history_low = 1000000000
@@ -32,9 +33,9 @@ def get_buy_watermark(symbol, buy_price, timestamp):
     return 1
 
 
-def analyze():
+def analyze_bull(base_symbol):
     symbols = [symbol['symbol'] for symbol in requests.get('{}/api/v3/ticker/price'.format(base_url)).json()
-               if symbol['symbol'].endswith('ETH')]
+               if symbol['symbol'].endswith(base_symbol)]
     for symbol in symbols:
         highest_price = 0
         starting_timestamp = 0
@@ -47,9 +48,10 @@ def analyze():
         starting_increase = 0
         buy_watermark = 0
         buy_date = None
+        base_time = '30m'
         kline_starting_timestamp = mktime(datetime.strptime(
             '2018/01/01-00:00:00', "%Y/%m/%d-%H:%M:%S").timetuple()) * 1000
-        kline_data = {'symbol': symbol, 'interval': '1h', 'limit': 500, 'startTime': int(kline_starting_timestamp)}
+        kline_data = {'symbol': symbol, 'interval': base_time, 'limit': 500, 'startTime': int(kline_starting_timestamp)}
         klines = requests.get('{}/api/v1/klines?{}'.format(base_url, urlencode(kline_data))).json()
         klines.pop(0)
         for kline in klines:
@@ -88,46 +90,86 @@ def analyze():
 
         statistics_list.append(symbol_statistics_json)
 
-        # with open('statistics.log', 'a+') as statistics_file:
-        #     if buy_price > 0 and profit > 0.5:
-        #         json.dump(symbol_statistics_json, statistics_file)
-        #         statistics_file.write('\n')
+    with open('statistics-{}.log'.format(base_time), 'a+') as statistics_file:
+        json.dump(statistics_list, statistics_file, indent=4)
+        statistics_file.write('\n')
 
-    statistics_list.sort(key=lambda i: i['profit'], reverse=True)
+
+def analyze_bear(base_symbol):
+    symbols = [symbol['symbol'] for symbol in requests.get('{}/api/v3/ticker/price'.format(base_url)).json()
+               if symbol['symbol'].endswith(base_symbol)]
+    for symbol in symbols:
+        starting_timestamp = 0
+        buy_price = 0
+        possess = False
+        highest_profit = 0
+        lowest_profit = 100000
+        kline_starting_timestamp = mktime(datetime.strptime(
+            '2018/01/01-00:00:00', "%Y/%m/%d-%H:%M:%S").timetuple()) * 1000
+        kline_data = {'symbol': symbol, 'interval': '6h', 'limit': 500, 'startTime': int(kline_starting_timestamp)}
+        klines = requests.get('{}/api/v1/klines?{}'.format(base_url, urlencode(kline_data))).json()
+
+        for kline in klines:
+            price_open = float(kline[1])
+            price_low = float(kline[3])
+            timestamp = float(kline[0])
+
+            if possess and timestamp != starting_timestamp:
+                sell_price = price_open
+                profit = sell_price / buy_price - 1
+                if highest_profit < profit:
+                    highest_profit = profit
+                if lowest_profit > profit:
+                    lowest_profit = profit
+                possess = False
+
+            if not possess and price_open / price_low >= 1.2:
+                buy_price = price_open / 1.2
+                starting_timestamp = timestamp
+                possess = True
+
+        symbol_statistics_json = {'symbol': symbol,
+                                  'highest_profit': highest_profit,
+                                  'lowest_profit': lowest_profit}
+
+        statistics_list.append(symbol_statistics_json)
 
     with open('statistics.log', 'a+') as statistics_file:
         json.dump(statistics_list, statistics_file, indent=4)
         statistics_file.write('\n')
 
 
-def max_profit(data):
-    profit_percent_low = 0.3
-    profit_percent_high = 1
+def max_profit():
+    with open('statistics.log', 'r') as statistics_file:
+        data = json.load(statistics_file)
+
+    profit_percent_low = None
+    profit_percent_high = 0.3
 
     total = len(data)
-    below_low_total = len([d for d in data if d['profit'] < profit_percent_low])
-    in_low_high_total = len([d for d in data if d['profit'] >= profit_percent_low
-                             and d['profit'] < profit_percent_high])
+    if profit_percent_low:
+        below_low_total = len([d for d in data if d['profit'] < profit_percent_low])
+        in_low_high_total = len([d for d in data if profit_percent_low <= d['profit'] < profit_percent_high])
+    else:
+        below_low_total = len([d for d in data if d['profit'] < profit_percent_high])
     above_high_total = len([d for d in data if d['profit'] >= profit_percent_high])
 
-    gain_low = in_low_high_total / total * profit_percent_low * 0.5 - (total - in_low_high_total) / total * 0.5 * 0.1
+    if profit_percent_low:
+        gain_low = in_low_high_total / total * profit_percent_low * 0.5 - (total - in_low_high_total) / total * 0.5 * 0.1
+    else:
+        gain_low = 0
     gain_high = above_high_total / total * profit_percent_high
     loss = below_low_total / total * 0.1
 
-    gain = gain_high + gain_low - loss
-    pass
+    return gain_high + gain_low - loss
 
 
 def get_trading_pairs_rule():
     exchange_info = requests.get('{}/api/v1/exchangeInfo'.format(base_url)).json()['symbols']
     pass
 
-with open('statistics.log', 'r') as statistics_file:
-    json = json.load(statistics_file)
 
-get_trading_pairs_rule()
-max_profit(json)
-j = {}
-if not j:
-    pass
-analyze()
+analyze_bear('USDT')
+# analyze_bull('ETH')
+profit = max_profit()
+pass
