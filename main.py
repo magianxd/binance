@@ -17,6 +17,7 @@ import utils
 class Binance(object):
     trigger_percent = 0.1
     stop_loss_percent = 0.3
+    already_increased_percent = 0.5
     take_profit_low_percent = 0.3
     take_profit_high_percent = 1
     kline_interval = '1h'
@@ -58,7 +59,7 @@ class Binance(object):
 
     def log(self, symbol, msg):
         with self.lock:
-            with open('main_log.log'.format(uuid.uuid4()), 'a+') as log_file:
+            with open('main_log-{}.log'.format(self.market_type), 'a+') as log_file:
                 log_file.write('{}-{}: {}\n'.format(datetime.now(), symbol, msg))
 
     def get_account_info(self):
@@ -118,7 +119,7 @@ class Binance(object):
         while self.symbols:
             asset = {}
             symbol = self.symbols.pop(0)
-            kline_data = {'symbol': symbol['symbol'], 'interval': self.kline_interval, 'limit': 1}
+            kline_data = {'symbol': symbol['symbol'], 'interval': self.kline_interval, 'limit': 10}
             kline_response = self.session.get('{}/api/v1/klines?{}'.format(self.base_url, urlencode(kline_data)))
 
             if kline_response.status_code != 200:
@@ -128,7 +129,8 @@ class Binance(object):
                 sleep(1)
                 continue
 
-            kline = kline_response.json()[0]
+            klines = kline_response.json()
+            kline = klines[-1]
             timestamp = int(kline[0])
 
             sold_asset = next((possessed_asset for possessed_asset in self.assets
@@ -144,6 +146,8 @@ class Binance(object):
 
             if self.market_type == 'BULL':
                 percent_fluctuation = price_now / price_open - 1
+                if not utils.qualify(klines, self.already_increased_percent):
+                    continue
             elif self.market_type == 'BEAR':
                 percent_fluctuation = price_open / price_now - 1
             else:
@@ -290,5 +294,5 @@ class Binance(object):
 
 
 if __name__ == '__main__':
-    binance = Binance('config.json', 'BULL')
+    binance = Binance('config.json', 'BEAR')
     binance.start()

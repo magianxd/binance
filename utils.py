@@ -21,3 +21,16 @@ def handle_order_data(order_info):
         total_commission += float(fill['commission'])
 
     return total_price / total_quantity, total_commission
+
+
+def qualify(klines, threshold_percent):
+    current_price = float(klines[-1][4])
+    lowest_price = 1000000000
+    for kline in klines:
+        price_low = float(kline[4])
+        if price_low < lowest_price:
+            lowest_price = price_low
+
+    if current_price / lowest_price - 1 >= threshold_percent:
+        return False
+    return True
