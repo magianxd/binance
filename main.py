@@ -16,7 +16,7 @@ import utils
 class Binance(object):
     trigger_percent = 0.1
     stop_loss_percent = 0.7
-    already_increased_percent = 0.5
+    already_increased_percent = 0.4
     take_profit_low_percent = 0.3
     take_profit_high_percent = 1
     kline_interval = '1h'
