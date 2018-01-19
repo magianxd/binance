@@ -24,7 +24,7 @@ class Binance(object):
     total_earning = 0
     assets = []
     symbols = []
-    worker_num = 4
+    worker_num = 1
     base_url = 'https://api.binance.com'
     api_key = None
     secret_key = None
@@ -87,7 +87,8 @@ class Binance(object):
         order_response = self.session.post('{}/api/v3/order?{}'.format(self.base_url, urlencode(data)))
 
         if order_response.status_code != 200:
-            raise RuntimeError('Failed to place order: {}, {}, {}, {}'.format(symbol, quantity, side, price))
+            self.log('ERROR', 'Failed to place order: {}, {}, {}'.format(symbol, quantity, side))
+            return
 
         order_info = order_response.json()
 
@@ -103,7 +104,8 @@ class Binance(object):
         order_response = self.session.post('{}/api/v3/order?{}'.format(self.base_url, urlencode(data)))
 
         if order_response.status_code != 200:
-            raise RuntimeError('Failed to place order: {}, {}, {}'.format(symbol, quantity, side))
+            self.log('ERROR', 'Failed to place order: {}, {}, {}'.format(symbol, quantity, side))
+            return
 
         order_info = order_response.json()
 
@@ -120,7 +122,11 @@ class Binance(object):
             kline_response = self.session.get('{}/api/v1/klines?{}'.format(self.base_url, urlencode(kline_data)))
 
             if kline_response.status_code != 200:
-                raise RuntimeError('Failed to get {} kline'.format(symbol['symbol']))
+                self.log('ERROR', 'Failed to get {} kline. status code: {}'.format(symbol['symbol'],
+                                                                                   kline_response.status_code))
+                self.symbols.append(symbol)
+                sleep(1)
+                continue
 
             kline = kline_response.json()[0]
             timestamp = int(kline[0])
@@ -184,8 +190,10 @@ class Binance(object):
             kline_response = self.session.get('{}/api/v1/klines?{}'.format(self.base_url, urlencode(kline_data)))
 
             if kline_response.status_code != 200:
-                raise RuntimeError('Failed to get {} kline'.format(asset['name']))
-
+                self.log('ERROR', 'Failed to get {} kline. status code: {}'.format(asset['name'],
+                                                                                   kline_response.status_code))
+                sleep(1)
+                continue
             kline = kline_response.json()[0]
             timestamp = int(kline[0])
             price_now = float(kline[4])
@@ -206,6 +214,7 @@ class Binance(object):
                     self.log(asset['name'], 'Sell {} at price {} USDT, earning: {} USDT, total earning: {} USDT'.format(
                         quantity, sell_price, asset['earning'], self.total_earning))
                     break
+            sleep(5)
 
     def operator_bull(self, asset):
         self.log(asset['name'], 'Starting to operate trading pairs')
@@ -214,8 +223,10 @@ class Binance(object):
             kline_response = self.session.get('{}/api/v1/klines?{}'.format(self.base_url, urlencode(kline_data)))
 
             if kline_response.status_code != 200:
-                raise RuntimeError('Failed to get {} kline'.format(asset['name']))
-
+                self.log('ERROR', 'Failed to get {} kline. status code: {}'.format(asset['name'],
+                                                                                   kline_response.status_code))
+                sleep(1)
+                continue
             kline = kline_response.json()[0]
             price_now = float(kline[4])
 
@@ -279,5 +290,5 @@ class Binance(object):
 
 
 if __name__ == '__main__':
-    binance = Binance('config.json', 'BEAR')
+    binance = Binance('config.json', 'BULL')
     binance.start()
