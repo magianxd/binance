@@ -5,6 +5,8 @@ from urllib.parse import urlencode
 
 import requests
 
+import utils
+
 base_url = 'https://api.binance.com'
 
 statistics_list = []
@@ -168,6 +170,8 @@ def get_trading_pairs_rule():
     exchange_info = requests.get('{}/api/v1/exchangeInfo'.format(base_url)).json()['symbols']
     pass
 
+with open('statistics.log', 'r') as file:
+    utils.handle_order_data(json.load(file))
 
 analyze_bear('USDT')
 # analyze_bull('ETH')

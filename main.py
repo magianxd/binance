@@ -3,20 +3,19 @@ import concurrent.futures
 import hashlib
 import hmac
 import json
-import logging
 import threading
-import uuid
 from datetime import datetime
 from time import sleep
 from urllib.parse import urlencode
 
 import requests
+
 import utils
 
 
 class Binance(object):
     trigger_percent = 0.1
-    stop_loss_percent = 0.3
+    stop_loss_percent = 0.7
     already_increased_percent = 0.5
     take_profit_low_percent = 0.3
     take_profit_high_percent = 1
@@ -33,7 +32,7 @@ class Binance(object):
     fluctuation_restrict = 1.3
     lock = threading.Lock()
 
-    def __init__(self, config_file_path, market_type):
+    def __init__(self, config_file_path, market_type, worker_num):
         with open(config_file_path) as config_file:
             config = json.load(config_file)
 
@@ -43,12 +42,12 @@ class Binance(object):
         self.log('Main', 'Initializing...')
         self.session = requests.session()
         self.market_type = market_type
+        self.worker_num = worker_num
         if self.market_type == 'BEAR':
             self.fluctuation_restrict = 10000000000
             self.trigger_percent = 0.2
             self.kline_interval = '6h'
             self.base_symbol = 'USDT'
-            self.worker_num = 1
         self.session.headers.update({'X-MBX-APIKEY': self.api_key})
         self.symbols = [symbol for symbol in self.session.get(
             '{}/api/v1/exchangeInfo'.format(self.base_url)).json()['symbols']
@@ -88,12 +87,15 @@ class Binance(object):
         order_response = self.session.post('{}/api/v3/order?{}'.format(self.base_url, urlencode(data)))
 
         if order_response.status_code != 200:
-            self.log('ERROR', 'Failed to place order: {}, {}, {}'.format(symbol, quantity, side))
+            self.log('ERROR', 'Failed to place order: {}, {}, {}. {}'.format(symbol['symbol'], quantity, side,
+                                                                             order_response.content))
             return
 
         order_info = order_response.json()
 
         if order_info['status'] != 'FILLED':
+            self.log('ERROR', 'Failed to fill order: {}, {}, {}. {}'.format(symbol['symbol'], quantity, side,
+                                                                            order_info))
             return
         return order_info
 
@@ -105,12 +107,15 @@ class Binance(object):
         order_response = self.session.post('{}/api/v3/order?{}'.format(self.base_url, urlencode(data)))
 
         if order_response.status_code != 200:
-            self.log('ERROR', 'Failed to place order: {}, {}, {}'.format(symbol, quantity, side))
+            self.log('ERROR', 'Failed to place order: {}, {}, {}. {}'.format(symbol['symbol'], quantity, side,
+                                                                             order_response.content))
             return
 
         order_info = order_response.json()
 
         if order_info['status'] != 'FILLED':
+            self.log('ERROR', 'Failed to fill order: {}, {}, {}. {}'.format(symbol['symbol'], quantity, side,
+                                                                            order_info))
             return
         return order_info
 
@@ -188,7 +193,7 @@ class Binance(object):
             sleep(1)
 
     def operator_bear(self, asset):
-        self.log(asset['name'], 'Starting to operate trading pairs')
+        self.log(asset['name'], 'Starting to operate {}'.format(asset['name']))
         while True:
             kline_data = {'symbol': asset['name'], 'interval': self.kline_interval, 'limit': 1}
             kline_response = self.session.get('{}/api/v1/klines?{}'.format(self.base_url, urlencode(kline_data)))
@@ -221,7 +226,7 @@ class Binance(object):
             sleep(5)
 
     def operator_bull(self, asset):
-        self.log(asset['name'], 'Starting to operate trading pairs')
+        self.log(asset['name'], 'Starting to operate {}'.format(asset['name']))
         while True:
             kline_data = {'symbol': asset['name'], 'interval': self.kline_interval, 'limit': 1}
             kline_response = self.session.get('{}/api/v1/klines?{}'.format(self.base_url, urlencode(kline_data)))
@@ -235,7 +240,7 @@ class Binance(object):
             price_now = float(kline[4])
 
             if not asset['profit_low_taken'] and price_now / asset['buy_price'] - 1 >= self.take_profit_low_percent:
-                self.log(asset['name'], 'Sell at profit {} triggered'.format(self.take_profit_low_percent))
+                self.log(asset['name'], 'Sell at profit {} triggered'.format(price_now / asset['buy_price'] - 1))
                 order_info = self.place_market_order(asset['name'], 'SELL', asset['quantity'] * 0.5)
 
                 if order_info:
@@ -294,5 +299,6 @@ class Binance(object):
 
 
 if __name__ == '__main__':
-    binance = Binance('config.json', 'BEAR')
+    binance = Binance('config.json', 'BULL', 2)
+    # binance = Binance('config.json', 'BEAR', 1)
     binance.start()
