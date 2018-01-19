@@ -120,7 +120,7 @@ class Binance(object):
         return order_info
 
     def monitor(self):
-        self.log('Worker', 'Starting to monitor trading pairs')
+        self.log('Monitor', 'Starting to monitor trading pairs')
         while self.symbols:
             asset = {}
             symbol = self.symbols.pop(0)
@@ -143,7 +143,7 @@ class Binance(object):
             if sold_asset and sold_asset['sold'] and sold_asset['buy_timestamp'] != timestamp:
                 self.log(sold_asset['name'],
                          'Found sold pairs, removing from assets. asset lifecycle details: {}'.format(asset))
-                self.log('Total earnings so far: {}'.format(self.total_earning))
+                self.log('Monitor', 'Total earnings so far: {}'.format(self.total_earning))
                 self.assets.remove(sold_asset)
 
             price_open = float(kline[1])
@@ -159,7 +159,7 @@ class Binance(object):
                 raise RuntimeError('Unsupported market type')
 
             if self.trigger_percent <= percent_fluctuation < self.trigger_percent * self.fluctuation_restrict:
-                self.log(symbol['symbol'], 'Buy operation triggered')
+                self.log(symbol['symbol'], 'Buy operation triggered, fluctuation: {}'.format(percent_fluctuation))
                 account_info = self.get_account_info()
                 balance = next((balance for balance in account_info['balances']
                                 if balance['asset'] == self.base_symbol))
@@ -239,8 +239,10 @@ class Binance(object):
             kline = kline_response.json()[0]
             price_now = float(kline[4])
 
-            if not asset['profit_low_taken'] and price_now / asset['buy_price'] - 1 >= self.take_profit_low_percent:
-                self.log(asset['name'], 'Sell at profit {} triggered'.format(price_now / asset['buy_price'] - 1))
+            price_fluctuation = price_now / asset['buy_price'] - 1
+            if not asset['profit_low_taken'] and price_fluctuation >= self.take_profit_low_percent:
+                self.log(asset['name'], 'Sell at profit {} triggered. Fluctuation: {}'.format(
+                    self.take_profit_low_percent, price_fluctuation))
                 order_info = self.place_market_order(asset['name'], 'SELL', asset['quantity'] * 0.5)
 
                 if order_info:
@@ -253,8 +255,9 @@ class Binance(object):
                     self.log(asset['name'], 'Sell {} at price {} ETH, earning: {} ETH'.format(
                         quantity, sell_price, asset['earning']))
 
-            if price_now / asset['buy_price'] - 1 >= self.take_profit_high_percent:
-                self.log(asset['name'], 'Sell at profit {} triggered'.format(self.take_profit_high_percent))
+            if price_fluctuation >= self.take_profit_high_percent:
+                self.log(asset['name'], 'Sell at profit {} triggered. Fluctuation: {}'.format(
+                    self.take_profit_high_percent, price_fluctuation))
                 order_info = self.place_market_order(asset['name'], 'SELL', asset['quantity'])
 
                 if order_info:
@@ -270,7 +273,8 @@ class Binance(object):
                     break
 
             if price_now <= asset['stop_loss_price']:
-                self.log(asset['name'], 'Sell at stop loss {} triggered'.format(self.stop_loss_percent))
+                self.log(asset['name'], 'Sell at stop loss {} triggered. Fluctuation: {}'.format(
+                    self.stop_loss_percent, price_fluctuation))
                 order_info = self.place_market_order(asset['name'], 'SELL', asset['quantity'])
 
                 if order_info:
