@@ -124,7 +124,7 @@ class Binance(object):
         while self.symbols:
             asset = {}
             symbol = self.symbols.pop(0)
-            kline_data = {'symbol': symbol['symbol'], 'interval': self.kline_interval, 'limit': 10}
+            kline_data = {'symbol': symbol['symbol'], 'interval': self.kline_interval, 'limit': 30}
             kline_response = self.session.get('{}/api/v1/klines?{}'.format(self.base_url, urlencode(kline_data)))
 
             if kline_response.status_code != 200:

@@ -27,7 +27,7 @@ def qualify(klines, threshold_percent):
     lowest_price = 1000000000
     highest_price = 0
     for kline in klines:
-        price_low = float(kline[4])
+        price_low = float(kline[4]) if float(kline[4]) < float(kline[1]) else float(kline[1])
         price_high = float(kline[2])
         if price_low < lowest_price:
             lowest_price = price_low
