@@ -1,6 +1,6 @@
 import json
 from datetime import datetime
-from time import mktime
+from time import mktime, sleep
 from urllib.parse import urlencode
 
 import requests
@@ -50,10 +50,10 @@ def analyze_bull(base_symbol):
         starting_increase = 0
         buy_watermark = 0
         buy_date = None
-        base_time = '30m'
+        base_time = '1h'
         kline_starting_timestamp = mktime(datetime.strptime(
             '2018/01/01-00:00:00', "%Y/%m/%d-%H:%M:%S").timetuple()) * 1000
-        kline_data = {'symbol': symbol, 'interval': base_time, 'limit': 500, 'startTime': int(kline_starting_timestamp)}
+        kline_data = {'symbol': symbol, 'interval': base_time, 'limit': 500}
         klines = requests.get('{}/api/v1/klines?{}'.format(base_url, urlencode(kline_data))).json()
         klines.pop(0)
         for kline in klines:
@@ -67,8 +67,8 @@ def analyze_bull(base_symbol):
                 highest_price = price_high
                 highest_price_timestamp = timestamp
 
-            if not possess and price_high / price_open - 1 > 0.1:
-                buy_price = price_open * 1.1
+            if not possess and price_high / price_open - 1 > 0.09:
+                buy_price = price_open * 1.09
                 starting_timestamp = timestamp
                 buy_date = datetime.fromtimestamp(
                     int(starting_timestamp / 1000)).strftime('%Y-%m-%d %H:%M:%S')
@@ -78,6 +78,7 @@ def analyze_bull(base_symbol):
                 highest_price_timestamp = timestamp
                 buy_watermark = get_buy_watermark(symbol, buy_price, starting_timestamp)
                 possess = True
+        sleep(1)
 
         if possess:
             time_take = highest_price_timestamp - starting_timestamp
@@ -170,10 +171,9 @@ def get_trading_pairs_rule():
     exchange_info = requests.get('{}/api/v1/exchangeInfo'.format(base_url)).json()['symbols']
     pass
 
-with open('statistics.log', 'r') as file:
-    utils.handle_order_data(json.load(file))
 
-analyze_bear('USDT')
-# analyze_bull('ETH')
+get_trading_pairs_rule()
+# analyze_bear('USDT')
+analyze_bull('ETH')
 profit = max_profit()
 pass

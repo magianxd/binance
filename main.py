@@ -14,13 +14,14 @@ import utils
 
 
 class Binance(object):
-    trigger_percent = 0.1
+    trigger_percent = 0.09
     stop_loss_percent = 0.7
     already_increased_percent = 0.4
     take_profit_low_percent = 0.3
     take_profit_high_percent = 1
-    kline_interval = '1h'
+    kline_interval = '3m'
     base_symbol = 'ETH'
+    asset_symbol = None
     total_earning = 0
     assets = []
     symbols = []
@@ -32,7 +33,7 @@ class Binance(object):
     fluctuation_restrict = 1.3
     lock = threading.Lock()
 
-    def __init__(self, config_file_path, market_type, worker_num):
+    def __init__(self, config_file_path, market_type=None, worker_num=1):
         with open(config_file_path) as config_file:
             config = json.load(config_file)
 
@@ -48,17 +49,18 @@ class Binance(object):
             self.trigger_percent = 0.2
             self.kline_interval = '6h'
             self.base_symbol = 'USDT'
+            self.asset_symbol = 'BTC'
         self.session.headers.update({'X-MBX-APIKEY': self.api_key})
         self.symbols = [symbol for symbol in self.session.get(
             '{}/api/v1/exchangeInfo'.format(self.base_url)).json()['symbols']
                         if symbol['symbol'].endswith(self.base_symbol)]
-        if self.market_type == 'BEAR':
-            self.symbols = [symbol for symbol in self.symbols if symbol['symbol'] == 'BTCUSDT']
+        if self.asset_symbol:
+            self.symbols = [symbol for symbol in self.symbols if symbol['baseAsset'] == self.asset_symbol]
         self.get_account_info()
 
     def log(self, symbol, msg):
         with self.lock:
-            with open('main_log-{}.log'.format(self.market_type), 'a+') as log_file:
+            with open('main.log', 'a+') as log_file:
                 log_file.write('{}-{}: {}\n'.format(datetime.now(), symbol, msg))
 
     def get_account_info(self):
@@ -124,7 +126,7 @@ class Binance(object):
         while self.symbols:
             asset = {}
             symbol = self.symbols.pop(0)
-            kline_data = {'symbol': symbol['symbol'], 'interval': self.kline_interval, 'limit': 30}
+            kline_data = {'symbol': symbol['symbol'], 'interval': self.kline_interval, 'limit': 1}
             kline_response = self.session.get('{}/api/v1/klines?{}'.format(self.base_url, urlencode(kline_data)))
 
             if kline_response.status_code != 200:
@@ -149,20 +151,23 @@ class Binance(object):
             price_open = float(kline[1])
             price_now = float(kline[4])
 
-            if self.market_type == 'BULL':
-                percent_fluctuation = price_now / price_open - 1
-                if not utils.qualify(klines, self.already_increased_percent):
-                    continue
-            elif self.market_type == 'BEAR':
-                percent_fluctuation = price_open / price_now - 1
-            else:
-                raise RuntimeError('Unsupported market type')
+            percent_fluctuation = price_now / price_open - 1
+
+            if not self.market_type:
+                if percent_fluctuation >= 0:
+                    self.market_type = 'BULL'
+                else:
+                    self.market_type = 'BEAR'
+                    self.fluctuation_restrict = 10000000000
+                    self.trigger_percent = 0.2
+
+            percent_fluctuation = abs(percent_fluctuation)
 
             if self.trigger_percent <= percent_fluctuation < self.trigger_percent * self.fluctuation_restrict:
                 self.log(symbol['symbol'], 'Buy operation triggered, fluctuation: {}'.format(percent_fluctuation))
                 account_info = self.get_account_info()
                 balance = next((balance for balance in account_info['balances']
-                                if balance['asset'] == self.base_symbol))
+                                if balance['asset'] == symbol['quoteAsset']))
                 balance_used = float(balance['free']) / self.worker_num
 
                 if float(symbol['filters'][0]['minPrice']) <= balance_used <= float(symbol['filters'][0]['maxPrice']):
@@ -177,10 +182,12 @@ class Binance(object):
                         asset['sold'] = False
                         asset['spent'] = asset['buy_price'] * asset['quantity']
                         asset['earning'] = 0
+                        asset['quoteAsset'] = symbol['quoteAsset']
                         asset['stop_loss_price'] = asset['buy_price'] * self.stop_loss_percent
                         asset['profit_low_taken'] = False
-                        self.log(symbol['symbol'], 'Buy {} at price {} ETH'.format(asset['quantity'],
-                                                                                   asset['buy_price']))
+                        self.log(symbol['symbol'], 'Buy {} at price {} {}'.format(asset['quantity'],
+                                                                                  asset['buy_price'],
+                                                                                  asset['quoteAsset']))
                         self.assets.append(asset)
                         self.log(symbol['symbol'], 'Buy details: {}'.format(asset))
                         if self.market_type == 'BULL':
@@ -190,10 +197,17 @@ class Binance(object):
                         continue
 
             self.symbols.append(symbol)
-            sleep(1)
+            with self.lock:
+                for new_symbol in [symbol for symbol in self.session.get(
+                    '{}/api/v1/exchangeInfo'.format(self.base_url)).json()['symbols']
+                                if symbol['symbol'].endswith(self.base_symbol)]:
+                    if new_symbol['symbol'] not in [symbol['symbol'] for symbol in self.symbols] + \
+                            [asset['name'] for asset in self.assets]:
+                        self.symbols.append(new_symbol)
+            sleep(0.5)
 
     def operator_bear(self, asset):
-        self.log(asset['name'], 'Starting to operate {}'.format(asset['name']))
+        self.log(asset['name'], 'Starting to bear operate {}'.format(asset['name']))
         while True:
             kline_data = {'symbol': asset['name'], 'interval': self.kline_interval, 'limit': 1}
             kline_response = self.session.get('{}/api/v1/klines?{}'.format(self.base_url, urlencode(kline_data)))
@@ -220,13 +234,15 @@ class Binance(object):
                     asset['sold'] = True
                     with self.lock:
                         self.total_earning += asset['earning'] - asset['spent']
-                    self.log(asset['name'], 'Sell {} at price {} USDT, earning: {} USDT, total earning: {} USDT'.format(
-                        quantity, sell_price, asset['earning'], self.total_earning))
+                    self.log(asset['name'], 'Sell {} at price {} {}, earning: {}, total earning: {}'.format(
+                        quantity, sell_price, asset['quoteAsset'], asset['earning'], self.total_earning))
                     break
             sleep(5)
 
     def operator_bull(self, asset):
-        self.log(asset['name'], 'Starting to operate {}'.format(asset['name']))
+        self.log(asset['name'], 'Starting to bull operate {}'.format(asset['name']))
+        new_highest_price = 0
+        count = 0
         while True:
             kline_data = {'symbol': asset['name'], 'interval': self.kline_interval, 'limit': 1}
             kline_response = self.session.get('{}/api/v1/klines?{}'.format(self.base_url, urlencode(kline_data)))
@@ -252,12 +268,17 @@ class Binance(object):
                     asset['earning'] += sell_price * quantity
                     asset['quantity'] -= quantity
                     asset['profit_low_taken'] = True
-                    self.log(asset['name'], 'Sell {} at price {} ETH, earning: {} ETH'.format(
-                        quantity, sell_price, asset['earning']))
+                    self.log(asset['name'], 'Sell {} at price {} {}, earning: {}'.format(
+                        quantity, sell_price, asset['quoteAsset'], asset['earning']))
 
-            if price_fluctuation >= self.take_profit_high_percent:
-                self.log(asset['name'], 'Sell at profit {} triggered. Fluctuation: {}'.format(
-                    self.take_profit_high_percent, price_fluctuation))
+            if new_highest_price < price_now:
+                new_highest_price = price_now
+                count = 0
+            else:
+                count += 1
+
+            if count == 10:
+                self.log(asset['name'], 'Sell at profit {} triggered.'.format(price_fluctuation))
                 order_info = self.place_market_order(asset['name'], 'SELL', asset['quantity'])
 
                 if order_info:
@@ -268,8 +289,8 @@ class Binance(object):
                     asset['sold'] = True
                     with self.lock:
                         self.total_earning += asset['earning'] - asset['spent']
-                    self.log(asset['name'], 'Sell {} at price {} ETH, earning: {} ETH, total earning: {} ETH'.format(
-                        quantity, sell_price, asset['earning'], self.total_earning))
+                    self.log(asset['name'], 'Sell {} at price {} {}, earning: {}, total earning: {}'.format(
+                        quantity, sell_price, asset['quoteAsset'], asset['earning'], self.total_earning))
                     break
 
             if price_now <= asset['stop_loss_price']:
@@ -285,10 +306,10 @@ class Binance(object):
                     asset['sold'] = True
                     with self.lock:
                         self.total_earning += asset['earning'] - asset['spent']
-                    self.log(asset['name'], 'Sell {} at price {} ETH, earning: {} ETH, total earning: {} ETH'.format(
-                        quantity, sell_price, asset['earning'], self.total_earning))
+                    self.log(asset['name'], 'Sell {} at price {} {}, earning: {}, total earning: {}'.format(
+                        quantity, sell_price, asset['quoteAsset'], asset['earning'], self.total_earning))
                     break
-            sleep(5)
+            sleep(1)
 
     def start(self):
         self.log('Main', 'Starting worker threads to monitor trading pairs. Worker number: {}'.format(self.worker_num))
@@ -303,6 +324,6 @@ class Binance(object):
 
 
 if __name__ == '__main__':
-    binance = Binance('config.json', 'BULL', 2)
+    binance = Binance('config.json', worker_num=1)
     # binance = Binance('config.json', 'BEAR', 1)
     binance.start()
